@@ -1,5 +1,6 @@
 #define SCAN_SECS 5
 
+
 typedef struct {
         unsigned frame_ctrl:16;
         unsigned duration_id:16;
@@ -36,6 +37,12 @@ typedef struct {
         uint8_t mac_des[6];
 
 } esp_snif_packet_t;
+
+typedef struct snifPktQueue
+{
+    esp_snif_packet_t pkt;
+    struct snifPktQueue *next;
+}snifPktQueue;
 
 unsigned char *mac_hdr = NULL;
         
