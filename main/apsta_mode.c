@@ -42,6 +42,7 @@ static esp_err_t event_handler_ap(void *ctx, system_event_t *event);
 static esp_err_t event_handler_sta(void *ctx, system_event_t *event);
 void ping();
 esp_err_t pingResults(ping_target_id_t msgType, esp_ping_found * pf);
+void sendUDP(char *string);
 
 int isConnectAP = 0;
 int gotStaConn = 0;
@@ -52,6 +53,7 @@ ip4_addr_t ip;
 ip4_addr_t gw;
 ip4_addr_t msk;
 int recv_count,send_count;
+char str[24] = "ABCDEFGHIJKLMNOPQRSTUVW";
 
 void wifi_init_softap()
 {
@@ -274,73 +276,31 @@ static esp_err_t event_handler_apsta(void *ctx, system_event_t *event)
 
 void wifi_init_sta()
 {
-    printf("ESP32 Station Start\n");
-	
-	wifi_ps_type_t psType;
+    s_wifi_event_group = xEventGroupCreate();
 
     tcpip_adapter_init();
-    ESP_ERROR_CHECK(esp_event_loop_init(event_handler_sta, NULL));
+    ESP_ERROR_CHECK(esp_event_loop_init(event_handler, NULL) );
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
-	wifi_config_t wifi_config = {
-		.sta = {
-			.ssid = STA_WIFI_SSID,
-			.password = STA_WIFI_PASS,
-			.channel = 1,
-			//.listen_interval = 10
-		},
-	};
+
+    wifi_config_t wifi_config = {
+        .sta = {
+            .ssid = EXAMPLE_ESP_WIFI_SSID,
+            .password = EXAMPLE_ESP_WIFI_PASS,
+            .channel = 1
+        },
+    };
+
+   
 
 
-	ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA) );
-	ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config) );
-	//ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_MAX_MODEM));
-	ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
-	
-	ESP_ERROR_CHECK(esp_wifi_get_ps(&psType));
-	
-	switch(psType)
-	{
-		case WIFI_PS_NONE:			
-	        ESP_LOGI(TAG, "PS Type: WIFI_PS_NONE");
-			break;
-			
-		case WIFI_PS_MIN_MODEM:			
-	        ESP_LOGI(TAG, "PS Type: WIFI_PS_MIN_MODEM");
-			break;
-			
-		case WIFI_PS_MAX_MODEM:			
-	        ESP_LOGI(TAG, "PS Type: WIFI_PS_MAX_MODEM");
-			break;
-			
-		default:
-	        ESP_LOGI(TAG, "PS Type: NULL");
-			break;
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config));
+    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
+    ESP_ERROR_CHECK(esp_wifi_start());
 
-	}
-/*
-	wifi_config_t wifi_config = {
-		.sta = {
-			.ssid = STA_WIFI_SSID,
-			.password = STA_WIFI_PASS,
-			.channel = 1
-		},
-	};
-
-
-	ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA) );
-	ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config) );
-	ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));*/
-
-	ESP_LOGI(TAG, "wifi_init_sta finished.");
-	ESP_LOGI(TAG, "connect to ap SSID:%s password:%s",
-		STA_WIFI_SSID, STA_WIFI_PASS);
-
-
-
-	ESP_ERROR_CHECK(esp_wifi_start() );
 
 
 }
@@ -360,11 +320,17 @@ static esp_err_t event_handler_sta(void *ctx, system_event_t *event)
             msk = event->event_info.got_ip.ip_info.netmask;
             ESP_LOGI(TAG, "got ip:%s", ip4addr_ntoa(&ip));
             ESP_LOGI(TAG, "gw ip:%s", ip4addr_ntoa(&gw));
+			
+			if(!isConnectAP)
+			{
+				get_settings();
+				init_socket_client();
+			}
+			
             isConnectAP = TRUE;
             s_retry_num = 0;
 			//ping();
-			get_settings();
-			init_socket_client();
+            //xTaskCreate(&sendUDP, "sendUDP", 4096, str, 2, NULL);
             break;
         case SYSTEM_EVENT_STA_DISCONNECTED:
             ESP_LOGI(TAG, "SYSTEM_EVENT_STA_DISCONNECTED");
@@ -413,4 +379,14 @@ esp_err_t pingResults(ping_target_id_t msgType, esp_ping_found * pf)
 	//printf("Resp(mS):%d Timeouts:%d Total Time:%d\n",pf->resp_time, pf->timeout_count, pf->total_time);
 
 	return ESP_OK;
+}
+
+void sendUDP(char *string)
+{
+	printf("send %s, ", string);
+	while(1)
+	{
+		sendStr(string);
+		//vTaskDelay(5 / portTICK_PERIOD_MS);
+	}
 }

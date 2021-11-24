@@ -40,8 +40,9 @@
 #define SNIFFER_CHANNEL CONFIG_SNIFFER_CHANNEL
 
 
-void wifi_sniffer_packet_handler(void* buff, wifi_promiscuous_pkt_type_t type);
-inline static void socket_data_send(char *Buf);
+static void wifi_sniffer_packet_handler(void* buff, wifi_promiscuous_pkt_type_t type);
+
+inline static void socket_data_send(char *Buf, int size);
 inline static void socket_data_send_ck(char *Buf);
 static void console();
 snifPktQueue *createSnifPktNode(esp_snif_packet_t pkt);
@@ -74,17 +75,22 @@ extern int isConnectAP;
 
 extern int g_rssi_port, g_ck_port, g_channel, g_report_frequency;
 
+int errno;
+
 int timeOut = 0;
 int fstPktTime = 0;
 int successTimes = 0, failedTimes = 0;
 int pktCount = 0;
 
 pthread_t snif_pth_pkt;
-esp_snif_packet_t send_pkt;
 int isSend = FALSE;
 uint8_t scanMac_phone[6] = {0xe4, 0x33, 0xae, 0x0c, 0x0d, 0x39};
 
 snifPktQueue *snifQueHead = NULL, *snifQueCurrent = NULL;
+
+time_t firstTime = 0;
+time_t endTime = 0;
+int isTimeUp = FALSE;
 
 void app_main()
 {
@@ -95,29 +101,55 @@ void app_main()
       ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+	
+	printf("size (snifPktQueue) = %d\n", sizeof(snifPktQueue));
+	printf("size (esp_snif_packet_t) = %d\n", sizeof(esp_snif_packet_t));
+	printf("size (SO_SNDBUF) = %d\n", SO_SNDBUF);
+	
 
     wifi_init_sniffer();
-    xTaskCreate(&init_socket_server, "init_socket_server", 4096, NULL, 2, NULL);
-    xTaskCreate(&sendSnifPkt, "sendSnifPkt", 4096, NULL, 2, NULL);
+	firstTime = time(NULL);
+	
+	/*while(1)
+	{
+		if(NULL != snifQueHead)
+		{
+			socket_data_send((char *)&(snifQueHead->pkt), sizeof(esp_snif_packet_t));
+			delHeadSnifPktInQueue();
+		}
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+	}*/
+	
+	
+    /*xTaskCreate(&init_socket_server, "init_socket_server", 4096, NULL, 2, NULL);
+    xTaskCreate(&sendSnifPkt, "sendSnifPkt", sizeof(snifPktQueue)*2000, NULL, 2, NULL);*/
 }
 
-
-inline static void socket_data_send(char *Buf)
+void sendStr(char *str)
 {
-    if( sendto(ser_sock, Buf, sizeof(esp_snif_packet_t), 0, (struct sockaddr*)&server, sizeof(server)) < 0)
+	//socket_data_send(str);
+}
+
+inline static void socket_data_send(char *Buf, int size)
+{
+    if( sendto(ser_sock, Buf, size, 0, (struct sockaddr*)&server, sizeof(server)) < 0)
     {
         //puts("Send failed");
         //exit(0);
-    //    printf(", Send Failed\n");
+        //printf("Send Failed(%d)\n", errno);
+		perror("Send Failed");
+		//fprintf(stderr, "Send Failed error with msg is: %s\n",strerror(errno));
         if(isConnectAP)
             failedTimes++;
     }
     else
     {
-      //  printf(", Send Success\n");
+        //printf("Send Success(%d, %d)\n", successTimes, failedTimes);
         if(isConnectAP)
             successTimes++;
     }
+	
+	memset(Buf, 0x00, size);
 }
 
 
@@ -170,7 +202,6 @@ void wifi_init_sniffer()
     s_wifi_event_group = xEventGroupCreate();
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    //ESP_ERROR_CHECK(esp_event_loop_init(wifi_sniffer_packet_handler, NULL));
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_NULL) );
     ESP_ERROR_CHECK(esp_wifi_set_bandwidth(WIFI_MODE_NULL, WIFI_BW_HT40));
@@ -183,43 +214,41 @@ void wifi_init_sniffer()
     ESP_ERROR_CHECK(esp_wifi_set_channel(g_channel,0));
 
     wifi_init_sta();
-
-  
-
 }
 
 
-void wifi_sniffer_packet_handler(void* buff, wifi_promiscuous_pkt_type_t type)
+static void wifi_sniffer_packet_handler(void* buff, wifi_promiscuous_pkt_type_t type)
 {
-    uint8_t scanMac_snifapsta[6] = {0x4c, 0x11, 0xae, 0x6e, 0x38, 0x18};
+    esp_snif_packet_t *send_pkt = (esp_snif_packet_t *)malloc(sizeof(esp_snif_packet_t));
+    /*uint8_t scanMac_snifapsta[6] = {0x4c, 0x11, 0xae, 0x6e, 0x38, 0x18};
     uint8_t scanMac_snifstaap[6] = {0x4c, 0x11, 0xae, 0x6e, 0x38, 0x19};
     uint8_t scanMac_ap[6] = {0xbc, 0xdd, 0xc2, 0xcf, 0x48, 0xb1};
-    uint8_t scanMac_sta[6] = {0x98, 0xcd, 0xac, 0x85, 0x14, 0x94};
+    uint8_t scanMac_sta[6] = {0x98, 0xcd, 0xac, 0x85, 0x14, 0x94};*/
     
 
     const wifi_promiscuous_pkt_t *ppkt = (wifi_promiscuous_pkt_t *)buff;
     const wifi_ieee80211_packet_t *ipkt = (wifi_ieee80211_packet_t *)ppkt->payload;
     const wifi_ieee80211_mac_hdr_t *hdr = &ipkt->hdr;
         
-    //send_pkt.timestamp = ppkt->rx_ctrl.timestamp;
-    send_pkt.timestamp = pktCount;
-    send_pkt.channel = ppkt->rx_ctrl.channel;
-    send_pkt.rssi = ppkt->rx_ctrl.rssi;
-    memcpy(send_pkt.addr1, hdr->addr1,6);
-    memcpy(send_pkt.addr2, hdr->addr2,6);
-    memcpy(send_pkt.mac_des, mac_des,6);
+    //send_pkt->timestamp = ppkt->rx_ctrl.timestamp;
+    send_pkt->timestamp = pktCount;
+    send_pkt->channel = ppkt->rx_ctrl.channel;
+    send_pkt->rssi = ppkt->rx_ctrl.rssi;
+    memcpy(send_pkt->addr1, hdr->addr1,6);
+    memcpy(send_pkt->addr2, hdr->addr2,6);
+    memcpy(send_pkt->mac_des, mac_des,6);
     
-    int boolSnifsta = (memcmp(scanMac_snifapsta, hdr->addr2, sizeof(mac_des)) == 0);
+    /*int boolSnifsta = (memcmp(scanMac_snifapsta, hdr->addr2, sizeof(mac_des)) == 0);
     int boolSnifap = (memcmp(scanMac_snifstaap, hdr->addr1, sizeof(mac_des)) == 0);
     int boolAp = (memcmp(scanMac_ap, hdr->addr1, sizeof(mac_des)) == 0 || memcmp(scanMac_ap, hdr->addr2, sizeof(mac_des)) == 0);
     int boolSta = (memcmp(scanMac_sta, hdr->addr1, sizeof(mac_des)) == 0 || memcmp(scanMac_sta, hdr->addr2, sizeof(mac_des)) == 0);
-    int boolPhone = (memcmp(scanMac_phone, hdr->addr2, sizeof(mac_des)) == 0);
+    int boolPhone = (memcmp(scanMac_phone, hdr->addr2, sizeof(mac_des)) == 0);*/
     
     
     /*if(fstPktTime == 0)
-        fstPktTime = send_pkt.timestamp;
+        fstPktTime = send_pkt->timestamp;
     
-    if((send_pkt.timestamp - fstPktTime) < (120*1000000))
+    if((send_pkt->timestamp - fstPktTime) < (120*1000000))
     {
         printf("%d, ", successTimes);
         printf("%d, ", failedTimes);
@@ -231,7 +260,7 @@ void wifi_sniffer_packet_handler(void* buff, wifi_promiscuous_pkt_type_t type)
         printf("%02X:%02X\n", mac_des[4], mac_des[5]);
 
     }
-    else if(timeOut == 0 && (send_pkt.timestamp - fstPktTime) >= (120*1000000))
+    else if(timeOut == 0 && (send_pkt->timestamp - fstPktTime) >= (120*1000000))
     {
         timeOut++;
         printf("Times up\n");  
@@ -242,12 +271,12 @@ void wifi_sniffer_packet_handler(void* buff, wifi_promiscuous_pkt_type_t type)
 	/*if(pktCount <= 10)
 	{
 			
-		printf("%d, ", send_pkt.timestamp);
-		printf("%d, ", send_pkt.channel);
-		printf("%d, ", send_pkt.rssi);
-		printf("%02X:%02X, ", send_pkt.addr1[4], send_pkt.addr1[5]);
-		printf("%02X:%02X, ", send_pkt.addr2[4], send_pkt.addr2[5]);
-		printf("%02X:%02X\n", send_pkt.mac_des[4], send_pkt.mac_des[5]);
+		printf("%d, ", send_pkt->timestamp);
+		printf("%d, ", send_pkt->channel);
+		printf("%d, ", send_pkt->rssi);
+		printf("%02X:%02X, ", send_pkt->addr1[4], send_pkt->addr1[5]);
+		printf("%02X:%02X, ", send_pkt->addr2[4], send_pkt->addr2[5]);
+		printf("%02X:%02X\n", send_pkt->mac_des[4], send_pkt->mac_des[5]);
 	
 		addSnifPktInQueue(createSnifPktNode(send_pkt));
 		pktCount++;
@@ -263,24 +292,36 @@ void wifi_sniffer_packet_handler(void* buff, wifi_promiscuous_pkt_type_t type)
 	}
     */
 	
+	endTime = time(NULL);
+	
+	if(FALSE == isTimeUp && difftime(endTime, firstTime) > 120)
+	{
+		isTimeUp = TRUE;
+	}
+	
     pktCount++;
-	printf("%d, ", successTimes);
-	printf("%d, ", failedTimes);
-	printf("%d, ", send_pkt.timestamp);
-	printf("%d, ", send_pkt.channel);
-	printf("%d, ", send_pkt.rssi);
-	printf("%02X:%02X, ", send_pkt.addr1[4], send_pkt.addr1[5]);
-	printf("%02X:%02X, ", send_pkt.addr2[4], send_pkt.addr2[5]);
-	printf("%02X:%02X\n", send_pkt.mac_des[4], send_pkt.mac_des[5]);
+	
+	if(!isTimeUp)
+	{
+		printf("%d, ", (int)difftime(endTime, firstTime));
+		printf("%d, ", successTimes);
+		printf("%d, ", failedTimes);
+		printf("%d, ", send_pkt->timestamp);
+		printf("%d, ", send_pkt->channel);
+		printf("%d, ", send_pkt->rssi);
+		printf("%02X:%02X, ", send_pkt->addr1[4], send_pkt->addr1[5]);
+		printf("%02X:%02X, ", send_pkt->addr2[4], send_pkt->addr2[5]);
+		printf("%02X:%02X\n", send_pkt->mac_des[4], send_pkt->mac_des[5]);
 
-	addSnifPktInQueue(createSnifPktNode(send_pkt));
 		
-    //socket_data_send((char *)&send_pkt);
-    
-    
-
-    isSend = FALSE;
-    
+		if(isConnectAP)
+		{
+			socket_data_send((char *)send_pkt, sizeof(esp_snif_packet_t));
+			//vTaskDelay(5 / portTICK_PERIOD_MS);
+		}
+	    /*addSnifPktInQueue(createSnifPktNode(send_pkt));
+		vTaskDelay(10 / portTICK_PERIOD_MS);*/
+	}
     
 }
 void ckSniffAlive( void )
@@ -312,7 +353,7 @@ static void periodic_timer_callback(void* arg)
 
 snifPktQueue *createSnifPktNode(esp_snif_packet_t pkt)
 {
-	snifPktQueue *node = (snifPktQueue *)malloc(sizeof(esp_snif_packet_t)+1);
+	snifPktQueue *node = (snifPktQueue *)malloc(sizeof(snifPktQueue));
 	memcpy(&(node->pkt), &pkt, sizeof(esp_snif_packet_t));
 	node->next = NULL;
     
@@ -370,7 +411,9 @@ void printAll()
 void delHeadSnifPktInQueue()
 {
 	if(NULL != snifQueHead)
+	{
 	    snifQueHead = snifQueHead->next;
+	}
 }
 
 void sendSnifPkt(void *pvParameter)
@@ -380,7 +423,7 @@ void sendSnifPkt(void *pvParameter)
 	{
 		if(NULL != snifQueHead)
 		{
-			socket_data_send((char *)&(snifQueHead->pkt));
+			socket_data_send((char *)&(snifQueHead->pkt), sizeof(esp_snif_packet_t));
 			delHeadSnifPktInQueue();
 		}
         vTaskDelay(1 / portTICK_PERIOD_MS);

@@ -8,3 +8,4 @@
 void wifi_init_sniffer();
 void ckSniffAlive( void );
 void setSnifferOnOff(int set);
+void sendStr(char *str);

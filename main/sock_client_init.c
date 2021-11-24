@@ -106,6 +106,7 @@ void close_get_client_socket()
 
 void init_socket_client( void )
 {
+	int flags = 0;
 	char ser_ip[30] = "";
 	sprintf(ser_ip, "%s", g_dest_ip);
 	
@@ -114,6 +115,12 @@ void init_socket_client( void )
     {
         printf("Could not create socket");
     }
+	
+	flags = fcntl(ser_sock, F_GETFL);
+	if(fcntl(ser_sock, F_SETFL, flags & (~O_NONBLOCK)) < 0 )
+	{
+		perror("fcntl(ser_sock, F_SETFL, flags & ~O_NONBLOCK) fail!");
+	}
 
     client.sin_family = AF_INET;
     client.sin_addr.s_addr = htonl(INADDR_ANY);
